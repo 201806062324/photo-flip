@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>多照片对比翻转展示</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vant@3.6.2/lib/index.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@8.4.5/swiper-bundle.min.css">
+    <style>
+        .container {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+            background: #f5f5f5;
+        }
+        
+        .camera-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            display: none;
+        }
+        
+        #camera-view {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .swiper-container {
+            width: 100%;
+            height: 70vh;
+            margin-top: 10vh;
+        }
+        
+        .flip-card {
+            width: 85%;
+            height: 100%;
+            position: relative;
+            perspective: 1000px;
+            margin: 0 auto;
+        }
+        
+        .flip-card-inner {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transform-style: preserve-3d;
+            transition: transform 0.8s;
+        }
+        
+        .flip-card-inner.flipped {
+            transform: rotateY(180deg);
+        }
+        
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .front-face {
+            background-color: #fff;
+            transform: rotateY(0deg);
+        }
+        
+        .back-face {
+            background-color: #f5f5f5;
+            transform: rotateY(180deg);
+        }
+        
+        .card-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .empty-prompt {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            color: #999;
+            font-size: 18px;
+        }
+        
+        .capture-btn {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background-color: white;
+            border: 4px solid #f0f0f0;
+            z-index: 10;
+        }
+        
+        .action-buttons {
+            position: fixed;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            z-index: 10;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+        
+        .swiper-pagination {
+            position: absolute;
+            top: 10px;
+            z-index: 10;
+        }
+        
+        .swiper-pagination-bullet {
+            width: 8px;
+            height: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            opacity: 1;
+        }
+        
+        .swiper-pagination-bullet-active {
+            background: #1989fa;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <!-- 相机视图 -->
+            <div class="camera-container">
+                <video id="camera-view" autoplay playsinline></video>
+                <button class="capture-btn" @click="capturePhoto"></button>
+            </div>
+            
+            <!-- 卡片滑动容器 -->
+            <div class="swiper-container" v-show="cards.length > 0">
+                <div class="swiper-wrapper">
+                    <div class="swiper-slide" v-for="(card, index) in cards" :key="index">
+                        <div class="flip-card" @click="flipCard(index)">
+                            <div class="flip-card-inner" :class="{ flipped: card.isFlipped }">
+                                <div class="card-face front-face">
+                                    <img class="card-image" :src="card.newPhotoUrl" v-if="card.newPhotoUrl">
+                                    <div v-else class="empty-prompt">点击拍摄新照片</div>
+                                </div>
+                                <div class="card-face back-face">
+                                    <img class="card-image" :src="card.oldPhotoUrl" v-if="card.oldPhotoUrl">
+                                    <div v-else class="empty-prompt">点击选择旧照片</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="swiper-pagination"></div>
+            </div>
+            
+            <!-- 操作按钮 -->
+            <div class="action-buttons">
+                <van-button type="primary" block @click="addNewCard" v-if="!isCameraOpen">添加新卡片</van-button>
+                <van-button type="info" block @click="selectOldPhotoForCurrent" v-if="!isCameraOpen && cards.length > 0">
+                    为当前卡片选择旧照片
+                </van-button>
+                <van-button type="default" block @click="resetCamera" v-if="isCameraOpen">取消拍摄</van-button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.2.47/dist/vue.global.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vant@3.6.2/lib/vant.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swiper@8.4.5/swiper-bundle.min.js"></script>
+    <script>
+        const { createApp, ref, onMounted, nextTick } = Vue;
+        
+        createApp({
+            setup() {
+                const cards = ref([]);
+                const currentCardIndex = ref(0);
+                const isCameraOpen = ref(false);
+                const cameraStream = ref(null);
+                const swiperInstance = ref(null);
+                
+                // 初始化Swiper
+                const initSwiper = () => {
+                    swiperInstance.value = new Swiper('.swiper-container', {
+                        slidesPerView: 1,
+                        spaceBetween: 20,
+                        pagination: {
+                            el: '.swiper-pagination',
+                            clickable: true,
+                        },
+                        on: {
+                            slideChange: (swiper) => {
+                                currentCardIndex.value = swiper.activeIndex;
+                            },
+                        },
+                    });
+                };
+                
+                // 添加新卡片
+                const addNewCard = () => {
+                    cards.value.push({
+                        oldPhotoUrl: null,
+                        newPhotoUrl: null,
+                        isFlipped: false
+                    });
+                    
+                    nextTick(() => {
+                        if (!swiperInstance.value) {
+                            initSwiper();
+                        } else {
+                            swiperInstance.value.update();
+                            swiperInstance.value.slideTo(cards.value.length - 1);
+                        }
+                    });
+                };
+                
+                // 打开相机拍摄新照片
+                const openCamera = async (index) => {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            video: { 
+                                facingMode: 'environment',
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            },
+                            audio: false
+                        });
+                        
+                        const cameraView = document.getElementById('camera-view');
+                        cameraView.srcObject = stream;
+                        cameraStream.value = stream;
+                        
+                        document.querySelector('.camera-container').style.display = 'block';
+                        isCameraOpen.value = true;
+                        currentCardIndex.value = index;
+                    } catch (error) {
+                        console.error('相机访问错误:', error);
+                        vant.Toast.fail('无法访问相机，请检查权限设置');
+                    }
+                };
+                
+                // 拍摄照片
+                const capturePhoto = () => {
+                    const cameraView = document.getElementById('camera-view');
+                    const canvas = document.createElement('canvas');
+                    canvas.width = cameraView.videoWidth;
+                    canvas.height = cameraView.videoHeight;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(cameraView, 0, 0, canvas.width, canvas.height);
+                    
+                    const photoUrl = canvas.toDataURL('image/jpeg', 0.8);
+                    cards.value[currentCardIndex.value].newPhotoUrl = photoUrl;
+                    
+                    // 关闭相机
+                    resetCamera();
+                };
+                
+                // 为当前卡片选择旧照片
+                const selectOldPhotoForCurrent = () => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/*';
+                    
+                    input.onchange = e => {
+                        const file = e.target.files[0];
+                        if (file) {
+                            const reader = new FileReader();
+                            reader.onload = event => {
+                                compressImage(event.target.result, 800, 800, 0.7)
+                                    .then(compressedUrl => {
+                                        cards.value[currentCardIndex.value].oldPhotoUrl = compressedUrl;
+                                    });
+                            };
+                            reader.readAsDataURL(file);
+                        }
+                    };
+                    
+                    input.click();
+                };
+                
+                // 翻转卡片
+                const flipCard = (index) => {
+                    cards.value[index].isFlipped = !cards.value[index].isFlipped;
+                };
+                
+                // 压缩图片
+                const compressImage = (dataUrl, maxWidth, maxHeight, quality) => {
+                    return new Promise((resolve) => {
+                        const img = new Image();
+                        img.onload = function() {
+                            const canvas = document.createElement('canvas');
+                            let width = img.width;
+                            let height = img.height;
+                            
+                            if (width > maxWidth) {
+                                height *= maxWidth / width;
+                                width = maxWidth;
+                            }
+                            
+                            if (height > maxHeight) {
+                                width *= maxHeight / height;
+                                height = maxHeight;
+                            }
+                            
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            resolve(canvas.toDataURL('image/jpeg', quality));
+                        };
+                        img.src = dataUrl;
+                    });
+                };
+                
+                // 重置相机
+                const resetCamera = () => {
+                    if (cameraStream.value) {
+                        cameraStream.value.getTracks().forEach(track => track.stop());
+                        cameraStream.value = null;
+                    }
+                    
+                    document.querySelector('.camera-container').style.display = 'none';
+                    isCameraOpen.value = false;
+                };
+                
+                // 点击卡片事件
+                const handleCardClick = (index) => {
+                    const card = cards.value[index];
+                    if (!card.newPhotoUrl) {
+                        openCamera(index);
+                    } else if (!card.oldPhotoUrl) {
+                        selectOldPhotoForCurrent();
+                    } else {
+                        flipCard(index);
+                    }
+                };
+                
+                onMounted(() => {
+                    // 初始加载时添加一个空白卡片
+                    addNewCard();
+                });
+                
+                return {
+                    cards,
+                    currentCardIndex,
+                    isCameraOpen,
+                    addNewCard,
+                    openCamera,
+                    capturePhoto,
+                    selectOldPhotoForCurrent,
+                    flipCard,
+                    resetCamera,
+                    handleCardClick
+                };
+            }
+        }).use(vant).mount('#app');
+    </script>
+</body>
+</html>
