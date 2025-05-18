@@ -145,7 +145,7 @@
             <div class="swiper-container" v-show="cards.length > 0">
                 <div class="swiper-wrapper">
                     <div class="swiper-slide" v-for="(card, index) in cards" :key="index">
-                        <div class="flip-card" @click="flipCard(index)">
+                        <div class="flip-card" @click="handleCardClick(index)">
                             <div class="flip-card-inner" :class="{ flipped: card.isFlipped }">
                                 <div class="card-face front-face">
                                     <img class="card-image" :src="card.newPhotoUrl" v-if="card.newPhotoUrl">
@@ -153,7 +153,7 @@
                                 </div>
                                 <div class="card-face back-face">
                                     <img class="card-image" :src="card.oldPhotoUrl" v-if="card.oldPhotoUrl">
-                                    <div v-else class="empty-prompt">点击选择旧照片2</div>
+                                    <div v-else class="empty-prompt">点击选择旧照片</div>
                                 </div>
                             </div>
                         </div>
@@ -334,6 +334,8 @@
                 // 点击卡片事件
                 const handleCardClick = (index) => {
                     const card = cards.value[index];
+                    console.log(card,111);
+                    
                     if (!card.newPhotoUrl) {
                         openCamera(index);
                     } else if (!card.oldPhotoUrl) {
